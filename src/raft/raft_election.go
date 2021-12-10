@@ -7,12 +7,18 @@ func (rf *Raft) changeRole(role int) {
 
 	switch role {
 	case FOLLOWER:
+		rf.votedFor = -1
+		rf.role = FOLLOWER
+		rf.getVoteNum = 0
 	case CANDIDATE:
 		rf.role = CANDIDATE
 		rf.currentTerm += 1
 		rf.votedFor = rf.me
 		rf.getVoteNum = 1
 	case LEADER:
+		rf.role = LEADER
+		rf.votedFor = -1
+		rf.getVoteNum = 0
 	}
 	rf.mu.Unlock()
 }

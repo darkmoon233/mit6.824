@@ -22,7 +22,10 @@ import (
 	"time"
 )
 import "sync/atomic"
-import "../labrpc"
+
+import "labrpc"
+
+//import "6.824/labrpc"
 
 // import "bytes"
 // import "../labgob"
@@ -338,9 +341,26 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 
 	// Your initialization code here (2A, 2B, 2C).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	rf.role = FOLLOWER
+	rf.currentTerm = 0
+	rf.votedFor = -1
+	rf.getVoteNum = 0
+
+	rf.tickerElectionChan = make(chan bool)
+	rf.tickerHeartbeatChan = make(chan bool)
+	rf.lastApplied = 0
+	rf.log = []Entry{}
+	rf.matchIndex = make([]int, len(rf.peers))
+	rf.nextIndex = make([]int, len(rf.peers))
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
+
+	go rf.raftLoop()
+	go rf.heartbeatTicker()
+	go rf.electionTicker()
 
 	return rf
 }

@@ -34,6 +34,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if len(rf.log) <= args.PrevLogIndex || rf.log[args.PrevLogIndex].Term != args.PreLogTerm {
 		reply.Term = rf.currentTerm
 		reply.Success = false
+		rf.lastLogAppendTime = time.Now()
 		return
 	}
 
