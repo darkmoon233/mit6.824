@@ -17,14 +17,15 @@ package raft
 //   in the same server.
 //
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 import "sync/atomic"
 import "../labrpc"
 
 // import "bytes"
 // import "../labgob"
-
-
 
 //
 // as each Raft peer becomes aware that successive log entries are
@@ -43,6 +44,19 @@ type ApplyMsg struct {
 	CommandIndex int
 }
 
+// server 角色
+const (
+	FOLLOWER  = 0
+	CANDIDATE = 1
+	LEADER    = 2
+)
+
+// raft日志
+type Entry struct {
+	Command interface{} //业务相关,框架无关
+	Term    int         //选期
+}
+
 //
 // A Go object implementing a single Raft peer.
 //
@@ -57,6 +71,23 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 
+	// 论文figure2提到的变量
+	currentTerm int     //当前server的选期
+	votedFor    int     //当前server的投票目标
+	log         []Entry //本server的log
+	// 所有的commitIndex和lastApplied都是单调递增的,同时必须和leader确认了是共识的log才会被提交,根据数据
+	commitIndex int   //本机已提交日志的最大下标
+	lastApplied int   //应用于复制状态机的最大日志下标
+	nextIndex   []int //leader专用,对所有server记录的要发给他们的下一条日志的index
+	matchIndex  []int //leader专用,对所有的server记录他们已经能提供副本的位置
+
+	//自己编的
+	role                int       //本server的角色
+	tickerElectionChan  chan bool //是否发起选举
+	tickerHeartbeatChan chan bool // 是否发起心跳
+	lastLogAppendTime   time.Time //最后或得到的leader的追加日志(心跳)的时间
+	getVoteNum          int       //作为candidate所获得的选票数量
+
 }
 
 // return currentTerm and whether this server
@@ -66,6 +97,10 @@ func (rf *Raft) GetState() (int, bool) {
 	var term int
 	var isleader bool
 	// Your code here (2A).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	term = rf.currentTerm
+	isleader = rf.role == LEADER
 	return term, isleader
 }
 
@@ -84,7 +119,6 @@ func (rf *Raft) persist() {
 	// data := w.Bytes()
 	// rf.persister.SaveRaftState(data)
 }
-
 
 //
 // restore previously persisted state.
@@ -108,8 +142,21 @@ func (rf *Raft) readPersist(data []byte) {
 	// }
 }
 
+// 论文里figure2里都写了
+type AppendEntriesArgs struct {
+	Term         int     // 发起日志追加的server选期(其实未必是leader,但必然是曾经的leader)
+	LeaderId     int     // 发起日志追加的server的id
+	PrevLogIndex int     // 紧接在新条目之前的日志条目的索引(有点难理解),其实就是这次要追加给你的日志的第一条
+	PreLogTerm   int     // PrevLogIndex的选期
+	Entries      []Entry // 追加的日志
+	LeaderCommit int     // 发起日志追加的server的提交位点
+}
 
-
+// 论文里figure2里都写了
+type AppendEntriesReply struct {
+	Term    int  // 当期回复心跳的server的选期(供leader感知外部)
+	Success bool // 当期响应的的server是否已经包含了PrevLogIndex和PreLogTerm对应的条目(有点难理解)
+}
 
 //
 // example RequestVote RPC arguments structure.
@@ -117,6 +164,16 @@ func (rf *Raft) readPersist(data []byte) {
 //
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
+
+	// 论文figure2里RequestVote RPC里的内容
+	// 只有candidate才会发起选举
+
+	// server个人信息
+	Term        int // 候选人的选期
+	CandidateId int //候选人的serverid
+	// server的参选信息(接受者凭借参选信息决定是否投票)
+	LastLogIndex int // 候选人的最新日志游标
+	LastLogTerm  int // 候选人的最新日志选期
 }
 
 //
@@ -125,6 +182,10 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here (2A).
+	// 论文figure2里RequestVote RPC里的内容
+
+	Term        int  // 本server的当前选期,用来让candidate感知外部server的信息
+	voteGranted bool //本server是否同意投票给源server
 }
 
 //
@@ -132,6 +193,51 @@ type RequestVoteReply struct {
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	// 对前来的投票请求进行分析
+	// rule1: args 选期比当前的server的选期先进,当前server变身follower
+	// rule2: args 的选期比当期server的选期要落后,拒绝投票给他,还得让他知道当期server的选期给他小刀拉屁股,让他开开眼
+	// rule3: 当前server已经投票过了,但不是args的server,拒绝
+	// rule4: 还没有投票,或者投过票了,查看是否符合投票准则,如果符合就投给当前主机,同时重置计时器 lastLogAppendTime,否则拒绝
+
+	// rule1
+	if args.Term > rf.currentTerm {
+		rf.currentTerm = args.Term
+		rf.changeRole(FOLLOWER)
+	}
+
+	// rule2
+	if args.Term < rf.currentTerm {
+		reply.Term = rf.currentTerm
+		reply.voteGranted = false
+		return
+	}
+
+	// 后面都是args.Term==rf.currentTerm
+	// rule3
+	if rf.votedFor != -1 && rf.votedFor != args.CandidateId {
+		reply.Term = rf.currentTerm
+		reply.voteGranted = false
+		return
+	}
+	// rule4
+	// 投票规则,对比LastLogIndex和LastLogTerm是否全面超越
+	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
+		lastLogIndex := len(rf.log) - 1
+		if rf.log[lastLogIndex].Term > args.Term || (rf.log[lastLogIndex].Term == args.Term && lastLogIndex <= args.LastLogIndex) {
+			reply.Term = rf.currentTerm
+			reply.voteGranted = false
+			return
+		} else {
+			reply.Term = rf.currentTerm
+			reply.voteGranted = true
+			rf.votedFor = args.CandidateId
+			return
+		}
+	}
+
 }
 
 //
@@ -168,7 +274,6 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
-
 //
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
@@ -189,7 +294,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	isLeader := true
 
 	// Your code here (2B).
-
 
 	return index, term, isLeader
 }
@@ -237,7 +341,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
-
 
 	return rf
 }
