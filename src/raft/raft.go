@@ -23,7 +23,7 @@ import (
 )
 import "sync/atomic"
 
-import "labrpc"
+import "../labrpc"
 
 //import "6.824/labrpc"
 
