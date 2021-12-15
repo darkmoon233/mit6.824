@@ -43,7 +43,7 @@ func (rf *Raft) heartbeatTicker() {
 		rf.mu.Lock()
 
 		if rf.role == LEADER {
-			DPrintf("[timerHeartbeat+++++++] raft %d heartbeat timeout | current term: %d | current state: %d\n", rf.me, rf.currentTerm, rf.role)
+			DPrintf("[timerHeartbeatTicker+++++++] raft %d heartbeat timeout | current term: %d | current state: %d\n", rf.me, rf.currentTerm, rf.role)
 			rf.tickerHeartbeatChan <- true
 		}
 

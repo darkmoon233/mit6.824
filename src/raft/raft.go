@@ -23,7 +23,7 @@ import (
 )
 import "sync/atomic"
 
-import "../labrpc"
+import "labrpc"
 
 //import "6.824/labrpc"
 
@@ -188,7 +188,7 @@ type RequestVoteReply struct {
 	// 论文figure2里RequestVote RPC里的内容
 
 	Term        int  // 本server的当前选期,用来让candidate感知外部server的信息
-	voteGranted bool //本server是否同意投票给源server
+	VoteGranted bool //本server是否同意投票给源server
 }
 
 //
@@ -213,16 +213,19 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	// rule2
 	if args.Term < rf.currentTerm {
+		DPrintf("[vote judege+++++++++] from server%d, vote %t, term %d args.Term < rf.currentTerm", rf.me, reply.VoteGranted, reply.Term)
 		reply.Term = rf.currentTerm
-		reply.voteGranted = false
+		reply.VoteGranted = false
 		return
 	}
 
 	// 后面都是args.Term==rf.currentTerm
 	// rule3
 	if rf.votedFor != -1 && rf.votedFor != args.CandidateId {
+		DPrintf("[vote judege+++++++++] from server%d, vote %t, term %d args.rf.votedFor != -1 && rf.votedFor != args.CandidateId", rf.me, reply.VoteGranted, reply.Term)
+
 		reply.Term = rf.currentTerm
-		reply.voteGranted = false
+		reply.VoteGranted = false
 		return
 	}
 	// rule4
@@ -230,16 +233,22 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
 		lastLogIndex := len(rf.log) - 1
 		if rf.log[lastLogIndex].Term > args.Term || (rf.log[lastLogIndex].Term == args.Term && lastLogIndex <= args.LastLogIndex) {
+			DPrintf("[vote judege+++++++++] from server%d, vote %t, term %d 日志对比失败", rf.me, reply.VoteGranted, reply.Term)
+
 			reply.Term = rf.currentTerm
-			reply.voteGranted = false
+			reply.VoteGranted = false
 			return
 		} else {
+			DPrintf("[vote judege+++++++++] from server%d, vote %t, term %d 成了", rf.me, reply.VoteGranted, reply.Term)
+
 			reply.Term = rf.currentTerm
-			reply.voteGranted = true
+			reply.VoteGranted = true
 			rf.votedFor = args.CandidateId
 			return
 		}
 	}
+	DPrintf("[vote judege+++++++++] from server%d, vote %t, term %d 最后完全没人管竟然", rf.me, reply.VoteGranted, reply.Term)
+	return
 
 }
 
@@ -341,6 +350,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 
 	// Your initialization code here (2A, 2B, 2C).
+	DPrintf("total peers num is %d", len(peers))
+	DPrintf("current server is %d", rf.me)
+
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	rf.role = FOLLOWER
@@ -352,12 +364,15 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.tickerHeartbeatChan = make(chan bool)
 	rf.lastApplied = 0
 	rf.log = []Entry{}
+	rf.log = append(rf.log, Entry{})
+
 	rf.matchIndex = make([]int, len(rf.peers))
 	rf.nextIndex = make([]int, len(rf.peers))
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
+	DPrintf("start")
 	go rf.raftLoop()
 	go rf.heartbeatTicker()
 	go rf.electionTicker()

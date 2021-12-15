@@ -23,7 +23,6 @@ func TestInitialElection2A(t *testing.T) {
 	servers := 3
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
-
 	cfg.begin("Test (2A): initial election")
 
 	// is a leader elected?

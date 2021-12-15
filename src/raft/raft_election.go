@@ -3,8 +3,12 @@ package raft
 // 切换角色并且初始化数据
 func (rf *Raft) changeRole(role int) {
 	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	//if role == rf.role {
+	//	DPrintf("[changeRole+++++++] Sever %d, term %d, current role %d, target role %d, same role ,skip", rf.me, rf.currentTerm, rf.role, role)
+	//	return
+	//}
 	DPrintf("[changeRole+++++++] Sever %d, term %d, current role %d, target role %d", rf.me, rf.currentTerm, rf.role, role)
-
 	switch role {
 	case FOLLOWER:
 		rf.votedFor = -1
@@ -20,7 +24,6 @@ func (rf *Raft) changeRole(role int) {
 		rf.votedFor = -1
 		rf.getVoteNum = 0
 	}
-	rf.mu.Unlock()
 }
 
 // 执行选举动作(不知道为什么我也写得这么长,丑死)
@@ -34,7 +37,6 @@ func (rf *Raft) startElection() {
 		}
 		go func(server int) {
 			rf.mu.Lock()
-
 			rvArgs := RequestVoteArgs{
 				Term:         rf.currentTerm,
 				CandidateId:  rf.me,
@@ -44,8 +46,11 @@ func (rf *Raft) startElection() {
 			rf.mu.Unlock()
 
 			rvReply := RequestVoteReply{}
+			DPrintf("[RequestVoteArgs+++++++] Target Server:%d, CandidateId:%d, Args Term %d", server, rvArgs.CandidateId, rvArgs.Term)
 
 			res := rf.sendRequestVote(server, &rvArgs, &rvReply)
+
+			DPrintf("[RequestVoteReply+++++++] Target Server:%d, VoteGranted:%t, Reply Term %d", server, rvReply.VoteGranted, rvReply.Term)
 
 			if !res {
 				return
@@ -73,7 +78,7 @@ func (rf *Raft) startElection() {
 				return
 			}
 			// rule3
-			if rvReply.voteGranted && rf.currentTerm == rvReply.Term {
+			if rvReply.VoteGranted && rf.currentTerm == rvReply.Term {
 				rf.getVoteNum += 1
 				DPrintf("[Election+++++++] Sever %d, term %d, election term %d, vote from %d,  get one vote", rf.me, rf.currentTerm, rvArgs.Term, server)
 
@@ -90,8 +95,9 @@ func (rf *Raft) startElection() {
 
 // 执行心跳动作
 func (rf *Raft) startHeartBeat() {
-
+	DPrintf("total peers is %d", len(rf.peers))
 	for index := range rf.peers {
+
 		if rf.me == index {
 			return
 		}

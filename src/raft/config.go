@@ -8,7 +8,8 @@ package raft
 // test with the original before submitting.
 //
 
-import "../labrpc"
+// 原文是import "labrpc",但是因为sb的gomod问题,我只能拷贝labrpc和labgob到我本机的GOROOT/src目录下,所以相对路径被我修改了,我也是服了
+import "labrpc"
 import "log"
 import "sync"
 import "testing"
